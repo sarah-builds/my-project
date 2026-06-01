@@ -1,4 +1,9 @@
+import { useAuth } from "../lib/AuthContext";
 import { useEffect, useState } from 'react';
+// import { useLocation } from 'react-router-dom';
+import { DEMO_DATA } from '../lib/demoData';
+import { isDemoMode } from "../lib/appMode";
+
 import {
   Phone,
   Plus,
@@ -32,6 +37,10 @@ const relationshipOptions = [
 ];
 
 export default function Contacts() {
+
+
+const isDemo = isDemoMode();
+const { user } = useAuth(); // ✅
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalMode, setModalMode] = useState<ModalMode>(null);
@@ -44,23 +53,83 @@ export default function Contacts() {
   }, []);
 
   async function fetchContacts() {
-    try {
-      const { data } = await supabase
-        .from('contacts')
-        .select('*')
-        .order('is_emergency', { ascending: false })
-        .order('is_favorite', { ascending: false });
-      setContacts(data || []);
-    } catch (error) {
-      console.error('Error fetching contacts:', error);
-    } finally {
-      setLoading(false);
-    }
+  try {
+   if (isDemo) {
+  const demoContacts = [
+    ...DEMO_DATA.contacts,
+    {
+      id: "112-demo",
+      name: "Emergency Help",
+      phone: "112",
+      relationship: "emergency",
+      is_emergency: true,
+      is_favorite: false,
+      created_at: new Date().toISOString(),
+    },
+  ];
+
+  setContacts(demoContacts as any);
+  setLoading(false);
+  return;
+}
+
+ 
+if (!user) return;
+
+// STEP 1: fetch contacts
+let { data: contactsData } = await supabase
+  .from('contacts')
+  .select('*')
+  .eq('user_id', user.id);
+
+let finalData = contactsData || [];
+
+// STEP 2: if empty → insert default 112 contact
+if (finalData.length === 0) {
+  const defaultContact = {
+    user_id: user.id,
+    name: "Emergency Help",
+    phone: "112",
+    relationship: "emergency",
+    is_emergency: true,
+    is_favorite: false,
+    photo_url: "",
+  };
+
+  const { data: inserted } = await supabase
+    .from('contacts')
+    .insert(defaultContact)
+    .select()
+    .single();
+
+  if (inserted) {
+    finalData = [inserted];
+  }
+}
+
+
+
+// STEP 3: set state
+setContacts(finalData);
+  } catch (error) {
+    console.error('Error fetching contacts:', error);
+  } finally {
+    setLoading(false);
+  }
+}
+function callContact(contact: Contact) {
+  if (isDemo) {
+    alert(`Demo Mode: Calling is disabled. Would call ${contact.phone}`);
+    return;
   }
 
-  function callContact(contact: Contact) {
-    alert(`Calling ${contact.name} at ${contact.phone}...`);
+  if (contact.phone === "112") {
+    window.location.href = "tel:112";
+    return;
   }
+
+  window.location.href = `tel:${contact.phone}`;
+}
 
   // --- Modal handlers ---
 
@@ -99,56 +168,85 @@ export default function Contacts() {
     setForm(emptyContact);
   }
 
-  async function handleSave() {
-    if (!form.name.trim() || !form.phone.trim()) return;
+async function handleSave() {
+  if (!form.name.trim() || !form.phone.trim()) return;
 
-    setSaving(true);
-    try {
-      if (modalMode === 'add') {
-        const { data } = await supabase
-          .from('contacts')
-          .insert({ ...form })
-          .select()
-          .maybeSingle();
-        if (data) {
-          setContacts(prev => [...prev, data]);
-        }
-      } else if (modalMode === 'edit' && selectedContact) {
-        const { data } = await supabase
-          .from('contacts')
-          .update({ ...form })
-          .eq('id', selectedContact.id)
-          .select()
-          .maybeSingle();
-        if (data) {
-          setContacts(prev => prev.map(c => c.id === data.id ? data : c));
-        }
-      }
+  setSaving(true);
+  try {
+    if (isDemo) {
+      // ✅ Sirf state mein — no Supabase
+      const fakeEntry = {
+        ...form,
+        id: Date.now().toString(),
+        created_at: new Date().toISOString(),
+      };
+      setContacts(prev => [...prev, fakeEntry as any]);
       closeModal();
-    } catch (error) {
-      console.error('Error saving contact:', error);
-    } finally {
-      setSaving(false);
+      return;
     }
-  }
 
-  async function handleDelete() {
-    if (!selectedContact) return;
-    setSaving(true);
-    try {
-      await supabase
+   
+    if (!user) return;
+
+    if (modalMode === 'add') {
+      const { data } = await supabase
         .from('contacts')
-        .delete()
-        .eq('id', selectedContact.id);
-      setContacts(prev => prev.filter(c => c.id !== selectedContact.id));
-      closeModal();
-    } catch (error) {
-      console.error('Error deleting contact:', error);
-    } finally {
-      setSaving(false);
+        .insert({ ...form, user_id: user.id })
+        .select()
+        .maybeSingle();
+      if (data) {
+        setContacts(prev => [...prev, data]);
+      }
+    } else if (modalMode === 'edit' && selectedContact) {
+      const { data } = await supabase
+        .from('contacts')
+        .update({ ...form })
+        .eq('id', selectedContact.id)
+        .eq('user_id', user.id)
+        .select()
+        .maybeSingle();
+      if (data) {
+        setContacts(prev => prev.map(c => c.id === data.id ? data : c));
+      }
     }
+    closeModal();
+  } catch (error) {
+    console.error('Error saving contact:', error);
+  } finally {
+    setSaving(false);
   }
+}
+async function handleDelete() {
+  if (!selectedContact) return;
+  setSaving(true);
 
+  try {
+    // DEMO MODE
+    if (isDemo) {
+      setContacts(prev =>
+        prev.filter(c => c.id !== selectedContact.id)
+      );
+      closeModal();
+      return;
+    }
+
+    // REAL MODE
+    await supabase
+      .from('contacts')
+      .delete()
+      .eq('id', selectedContact.id);
+
+    setContacts(prev =>
+      prev.filter(c => c.id !== selectedContact.id)
+    );
+
+    closeModal();
+  } catch (error) {
+    console.error('Error deleting contact:', error);
+  } finally {
+    setSaving(false);
+  }
+}
   async function toggleEmergency(contact: Contact) {
     try {
       const newVal = !contact.is_emergency;
@@ -172,13 +270,26 @@ export default function Contacts() {
   const favoriteContacts = contacts.filter(c => c.is_favorite && !c.is_emergency);
   const otherContacts = contacts.filter(c => !c.is_favorite && !c.is_emergency);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="animate-pulse text-3xl text-teal-500">Loading contacts...</div>
+// Home.tsx mein loading return replace karo
+if (loading) {
+  return (
+    <div className="space-y-8 animate-pulse">
+      {/* Hero skeleton */}
+      <div className="h-48 bg-teal-100 rounded-3xl" />
+      {/* Cards skeleton */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="h-40 bg-gray-100 rounded-2xl" />
+        <div className="h-40 bg-gray-100 rounded-2xl" />
+        <div className="h-40 bg-gray-100 rounded-2xl" />
       </div>
-    );
-  }
+      {/* Content skeleton */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="h-56 bg-gray-100 rounded-2xl" />
+        <div className="h-56 bg-gray-100 rounded-2xl" />
+      </div>
+    </div>
+  );
+}
 
   return (
     <div className="space-y-8">
