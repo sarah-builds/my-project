@@ -1,4 +1,8 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
+// import { useLocation } from 'react-router-dom';
+import { DEMO_DATA } from '../lib/demoData';
+import { isDemoMode } from "../lib/appMode";
+import { useAuth } from "../lib/AuthContext";
 import {
   Image,
   Play,
@@ -49,6 +53,10 @@ const emptyMemory: Omit<Memory, 'id' | 'created_at'> = {
 };
 
 export default function Memories() {
+
+
+const isDemo = isDemoMode();
+const { user } = useAuth(); 
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalMode, setModalMode] = useState<ModalMode>(null);
@@ -58,6 +66,7 @@ export default function Memories() {
   const [uploading, setUploading] = useState(false);
   const [tagInput, setTagInput] = useState('');
   const [speaking, setSpeaking] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // Slideshow state
   const [slideIndex, setSlideIndex] = useState(0);
@@ -73,18 +82,28 @@ export default function Memories() {
   }, []);
 
   async function fetchMemories() {
-    try {
-      const { data } = await supabase
-        .from('memories')
-        .select('*')
-        .order('date', { ascending: false });
-      setMemories(data || []);
-    } catch (error) {
-      console.error('Error fetching memories:', error);
-    } finally {
+  try {
+    if (isDemo) {
+      setMemories(DEMO_DATA.memories as any);
       setLoading(false);
+      return;
     }
+
+    
+    if (!user) return;
+
+    const { data } = await supabase
+      .from('memories')
+      .select('*')
+      .eq('user_id', user.id) // ✅
+      .order('date', { ascending: false });
+    setMemories(data || []);
+  } catch (error) {
+    console.error('Error fetching memories:', error);
+  } finally {
+    setLoading(false);
   }
+}
 
   // --- Photo upload ---
 
@@ -237,55 +256,87 @@ export default function Memories() {
   // --- CRUD ---
 
   async function handleSave() {
-    if (!form.title.trim()) return;
+  if (!form.title.trim()) return;
 
-    setSaving(true);
-    try {
-      if (modalMode === 'add') {
-        const { data } = await supabase
-          .from('memories')
-          .insert({ ...form })
-          .select()
-          .maybeSingle();
-        if (data) {
-          setMemories(prev => [data, ...prev]);
-        }
-      } else if (modalMode === 'edit' && selectedMemory) {
-        const { data } = await supabase
-          .from('memories')
-          .update({ ...form })
-          .eq('id', selectedMemory.id)
-          .select()
-          .maybeSingle();
-        if (data) {
-          setMemories(prev => prev.map(m => m.id === data.id ? data : m));
-        }
-      }
+  setSaving(true);
+  try {
+    if (isDemo) {
+      // ✅ Sirf state mein — no Supabase
+      const fakeEntry = {
+        ...form,
+        id: Date.now().toString(),
+        created_at: new Date().toISOString(),
+      };
+      setMemories(prev => [fakeEntry as any, ...prev]);
       closeModal();
-    } catch (error) {
-      console.error('Error saving memory:', error);
-    } finally {
-      setSaving(false);
+      return;
     }
+
+    
+    if (!user) return;
+
+    if (modalMode === 'add') {
+      const { data } = await supabase
+        .from('memories')
+        .insert({ ...form, user_id: user.id })
+        .select()
+        .maybeSingle();
+      if (data) {
+        setMemories(prev => [data, ...prev]);
+      }
+    } else if (modalMode === 'edit' && selectedMemory) {
+      const { data } = await supabase
+        .from('memories')
+        .update({ ...form })
+        .eq('id', selectedMemory.id)
+        .eq('user_id', user.id)
+        .select()
+        .maybeSingle();
+      if (data) {
+        setMemories(prev => prev.map(m => m.id === data.id ? data : m));
+      }
+    }
+    closeModal();
+  } catch (error) {
+    console.error('Error saving memory:', error);
+  } finally {
+    setSaving(false);
   }
+}
 
   async function handleDelete() {
-    if (!selectedMemory) return;
-    setSaving(true);
-    try {
-      await supabase
-        .from('memories')
-        .delete()
-        .eq('id', selectedMemory.id);
-      setMemories(prev => prev.filter(m => m.id !== selectedMemory.id));
-      closeModal();
-    } catch (error) {
-      console.error('Error deleting memory:', error);
-    } finally {
-      setSaving(false);
-    }
-  }
+  if (!selectedMemory) return;
 
+  setSaving(true);
+
+  try {
+    // ---------------- DEMO MODE ----------------
+    if (isDemo) {
+      setMemories(prev =>
+        prev.filter(m => m.id !== selectedMemory.id)
+      );
+      closeModal();
+      return;
+    }
+
+    // ---------------- REAL MODE ----------------
+    await supabase
+      .from('memories')
+      .delete()
+      .eq('id', selectedMemory.id);
+
+    setMemories(prev =>
+      prev.filter(m => m.id !== selectedMemory.id)
+    );
+
+    closeModal();
+
+  } catch (error) {
+    console.error('Error deleting memory:', error);
+  } finally {
+    setSaving(false);
+  }
+}
   async function toggleFavorite(memory: Memory) {
     try {
       const newVal = !memory.is_favorite;
@@ -308,34 +359,47 @@ export default function Memories() {
 
   const favoriteCount = memories.filter(m => m.is_favorite).length;
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="animate-pulse text-3xl text-teal-500">Loading memories...</div>
+ // Home.tsx mein loading return replace karo
+if (loading) {
+  return (
+    <div className="space-y-8 animate-pulse">
+      {/* Hero skeleton */}
+      <div className="h-48 bg-teal-100 rounded-3xl" />
+      {/* Cards skeleton */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="h-40 bg-gray-100 rounded-2xl" />
+        <div className="h-40 bg-gray-100 rounded-2xl" />
+        <div className="h-40 bg-gray-100 rounded-2xl" />
       </div>
-    );
-  }
+      {/* Content skeleton */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="h-56 bg-gray-100 rounded-2xl" />
+        <div className="h-56 bg-gray-100 rounded-2xl" />
+      </div>
+    </div>
+  );
+}
 
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
-          <h1 className="text-5xl font-bold text-gray-800">Memory Replay</h1>
-          <p className="text-xl text-gray-600 mt-2">{memories.length} precious memories saved</p>
+          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-800">Memory Replay</h1>
+          <p className="text-base sm:text-lg lg:text-xl text-gray-600 mt-2">{memories.length} precious memories saved</p>
         </div>
-        <div className="flex items-center gap-3">
+       <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
           <button
             onClick={() => startSlideshow(0)}
             disabled={memories.length === 0}
-            className="flex items-center gap-3 px-6 py-4 bg-gradient-to-r from-rose-400 to-pink-400 hover:from-rose-500 hover:to-pink-500 text-white rounded-xl text-xl font-medium transition-colors shadow-lg disabled:opacity-40"
+            className="w-full sm:w-auto flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-rose-400 to-pink-400 hover:from-rose-500 hover:to-pink-500 text-white rounded-xl text-lg sm:text-xl font-medium transition-colors shadow-lg disabled:opacity-40"
           >
             <Play size={24} />
             Slideshow
           </button>
           <button
             onClick={openAddModal}
-            className="flex items-center gap-3 px-8 py-4 bg-teal-500 hover:bg-teal-600 text-white rounded-xl text-xl font-medium transition-colors shadow-lg"
+            className="w-full sm:w-auto flex items-center justify-center gap-3 px-6 py-4 bg-teal-500 hover:bg-teal-600 text-white rounded-xl text-lg sm:text-xl font-medium transition-colors shadow-lg"
           >
             <Plus size={28} />
             Add Memory
@@ -368,13 +432,17 @@ export default function Memories() {
             >
               {/* Image */}
               <div className="relative h-56 bg-gradient-to-br from-teal-200 to-cyan-200 overflow-hidden">
-                <img
-                  src={getPhotoUrl(memory, index)}
-                  alt={memory.title}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                />
+<img
+  src={getPhotoUrl(memory, index)}
+  alt={memory.title}
+  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 cursor-zoom-in"
+  onClick={(e) => {
+    e.stopPropagation();
+    setPreviewImage(() => getPhotoUrl(memory, index));
+  }}
+/>
                 {/* Overlay on hover */}
-                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" />
 
                 {/* Favorite badge */}
                 <button
@@ -468,7 +536,7 @@ export default function Memories() {
 
       {modalMode && (
         <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black/40 z-[9999] flex items-center justify-center p-4"
           onClick={closeModal}
         >
           <div
@@ -494,7 +562,7 @@ export default function Memories() {
                     className="w-full h-full object-cover"
                   />
                   {/* Gradient overlay */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" />
 
                   {/* Content overlay */}
                   <div className="absolute bottom-0 left-0 right-0 p-8">
@@ -847,6 +915,20 @@ export default function Memories() {
           </div>
         </div>
       )}
+      {/* Image Preview Modal */}
+{previewImage && (
+  <div
+    className="fixed inset-0 bg-black/80 z-[9999] flex items-center justify-center p-4"
+    onClick={() => setPreviewImage(null)}
+  >
+    <img
+      src={previewImage}
+      alt="Preview"
+      className="max-w-full max-h-full rounded-xl shadow-2xl"
+      onClick={(e) => e.stopPropagation()}
+    />
+  </div>
+)}
     </div>
   );
 }
@@ -870,6 +952,9 @@ function FormField({ label, required, children }: { label: string; required?: bo
         {required && <span className="text-red-500 ml-1">*</span>}
       </label>
       {children}
+      
     </div>
   );
+  
 }
+
