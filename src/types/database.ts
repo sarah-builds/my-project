@@ -54,3 +54,4 @@ export interface Event {
   reminder_sent: boolean;
   created_at: string;
 }
+
