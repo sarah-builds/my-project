@@ -54,7 +54,7 @@ export default function VoiceAssistant() {
 
     recognition.start();
   }
-
+ 
   function processCommand(text: string) {
     const lowerText = text.toLowerCase();
 
