@@ -226,7 +226,7 @@ INSERT INTO schedules (time, activity, category, day_of_week) VALUES
 ('01:00 PM', 'Rest time', 'rest', 'today'),
 ('02:00 PM', 'Doctor appointment - Dr. Smith', 'appointment', 'today'),
 ('04:00 PM', 'Afternoon tea and snack', 'meal', 'today'),
-('05:00 PM', 'Memory activities', 'activity', 'today'),
+('05:00 PM', 'Memory activities', 'activity', 'today'), 
 ('06:00 PM', 'Dinner', 'meal', 'today'),
 ('06:30 PM', 'Take evening medicines', 'medicine', 'today'),
 ('08:00 PM', 'Watch favorite TV show', 'leisure', 'today'),
